@@ -1,0 +1,17 @@
+{
+  "name": "orderos-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OrderOS - AI-Powered Order & Logistics Intelligence MVP",
+  "scripts": {
+    "dev": "concurrently -n \"SERVER,CLIENT\" -c \"blue,magenta\" \"npm run server\" \"npm run client\"",
+    "server": "npm --prefix server run dev",
+    "client": "npm --prefix client run dev",
+    "build": "npm --prefix client run build",
+    "start": "node server/src/index.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "puppeteer-core": "^25.16.0"
+  }
+}
