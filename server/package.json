@@ -1,7 +1,7 @@
 {
-  "name": "orderos-server",
+  "name": "orderix-server",
   "version": "1.0.0",
-  "description": "OrderOS Backend with Express and AI Shipment Intelligence",
+  "description": "Orderix Backend with Express and AI Shipment Intelligence",
   "main": "src/index.js",
   "type": "module",
   "scripts": {

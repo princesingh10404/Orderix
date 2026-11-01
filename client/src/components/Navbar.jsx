@@ -19,14 +19,14 @@ export default function Navbar({ searchTerm, onSearchChange, onRefresh, activeVi
           <div>
             <div className="flex items-center gap-2">
               <span className="font-bold text-lg tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-400 bg-clip-text text-transparent">
-                OrderOS
+                Orderix
               </span>
               <span className="px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                 MVP
               </span>
             </div>
             <p className="text-xs text-slate-400 hidden sm:block">
-              AI Order & Shipment Intelligence
+              AI-Powered Order & Shipment Intelligence
             </p>
           </div>
         </div>

@@ -1,4 +1,4 @@
-// API client service for OrderOS
+// API client service for Orderix
 
 const BASE_URL = '/api';
 

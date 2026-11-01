@@ -32,7 +32,7 @@ app.get('/api/health', (req, res) => {
   const configured = isTinyFishConfigured();
   res.json({
     status: 'healthy',
-    service: 'OrderOS Backend API',
+    service: 'Orderix Backend API',
     version: '1.1.0-live',
     mode: 'Hackathon MVP + Live TinyFish Integration',
     timestamp: new Date().toISOString(),
@@ -48,7 +48,7 @@ app.use('/api/orders', ordersRouter);
 // Root informational endpoint
 app.get('/', (req, res) => {
   res.send({
-    message: 'Welcome to OrderOS Logistics Intelligence API',
+    message: 'Welcome to Orderix Logistics Intelligence API',
     endpoints: {
       health: '/api/health',
       orders: '/api/orders',
@@ -63,7 +63,7 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   const configured = isTinyFishConfigured();
   console.log(`===============================================`);
-  console.log(`🚀 OrderOS Backend API running on port ${PORT}`);
+  console.log(`🚀 Orderix Backend API running on port ${PORT}`);
   console.log(`📦 Healthcheck: http://localhost:${PORT}/api/health`);
   console.log(`📋 Orders & Intelligence: http://localhost:${PORT}/api/orders`);
   console.log(`🐟 TinyFish Integration: ${configured ? 'LIVE API READY' : 'KEY MISSING'}`);

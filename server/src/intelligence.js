@@ -1,5 +1,5 @@
 /**
- * OrderOS AI Shipment Intelligence Module
+ * Orderix AI Shipment Intelligence Module
  * Analyzes extracted tracking JSON from TinyFish and identifies:
  * 1. Stale tracking updates
  * 2. Potentially delayed shipments

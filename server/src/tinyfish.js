@@ -1,5 +1,5 @@
 /**
- * OrderOS Live TinyFish Integration Service
+ * Orderix Live TinyFish Integration Service
  * Connects to the official TinyFish Agent API (https://agent.tinyfish.ai/v1/automation/run)
  * Automates tracking extraction from public tracking portals including Parcel Perfect.
  *

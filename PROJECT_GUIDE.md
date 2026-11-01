@@ -1,22 +1,22 @@
-# OrderOS — Project Guide & Architecture Handbook
+# Orderix — Project Guide & Architecture Handbook
 
-> A beginner-friendly, comprehensive guide to understanding what **OrderOS** does, how it works behind the scenes, and how all its pieces fit together.
+> A beginner-friendly, comprehensive guide to understanding what **Orderix** does, how it works behind the scenes, and how all its pieces fit together.
 
 ---
 
 ## 📖 Table of Contents
-1. [What OrderOS Does and What Problem It Solves](#1-what-orderos-does-and-what-problem-it-solves)
+1. [What Orderix Does and What Problem It Solves](#1-what-orderix-does-and-what-problem-it-solves)
 2. [How the Frontend, Backend, and API Communicate](#2-how-the-frontend-backend-and-api-communicate)
 3. [Folder Structure & Key File Map](#3-folder-structure--key-file-map)
 4. [How Order Data is Stored and Retrieved](#4-how-order-data-is-stored-and-retrieved)
 5. [How the AI Shipment Intelligence Engine Works](#5-how-the-ai-shipment-intelligence-engine-works)
-6. [What TinyFish Will Do & How It Will Connect](#6-what-tinyfish-will-do--how-it-will-connect)
+6. [TinyFish Live Integration & Sandbox Execution](#6-tinyfish-live-integration--sandbox-execution)
 7. [The Complete Journey of an Order Through the App](#7-the-complete-journey-of-an-order-through-the-app)
 8. [Glossary of Key Technical Terms](#8-glossary-of-key-technical-terms)
 
 ---
 
-## 1. What OrderOS Does and What Problem It Solves
+## 1. What Orderix Does and What Problem It Solves
 
 ### The Real-World Problem
 When businesses buy and sell equipment or products, logistics is often messy:
@@ -25,23 +25,23 @@ When businesses buy and sell equipment or products, logistics is often messy:
 * **Misleading Statuses**: A courier website might say *"Delivered"* on the main header, but if you look closely at the scan log, the package is actually sitting in a sorting warehouse 200 miles away.
 * **Missing Information**: Couriers frequently fail to provide an Expected Delivery Date (ETA), leaving customers in the dark.
 
-### The OrderOS Solution
-**OrderOS** is a centralized **Order Management Dashboard** combined with an **AI Shipment Intelligence Engine**:
+### The Orderix Solution
+**Orderix** is a centralized **Order Management Dashboard** combined with an **AI Shipment Intelligence Engine**:
 1. **Single Pane of Glass**: It brings customer information, supplier details, internal order IDs, and carrier tracking into one unified dashboard.
 2. **Proactive Risk Detection**: Rather than waiting for someone to manually spot an issue, an automated intelligence engine analyzes the tracking data and raises flags (e.g., *Stale Tracking*, *Overdue ETA*, *Conflicting Status*, or *Missing Delivery Data*).
-3. **Prepared for TinyFish**: It is structured to consume automated web-extracted tracking JSON payloads produced by **TinyFish**, eliminating manual courier portal checks.
+3. **Powered by TinyFish**: It consumes automated web-extracted tracking JSON payloads produced by **TinyFish**, eliminating manual courier portal checks.
 
 ---
 
 ## 2. How the Frontend, Backend, and API Communicate
 
-OrderOS uses a standard **Client-Server Architecture**:
+Orderix uses a standard **Client-Server Architecture**:
 
 ```
  ┌─────────────────────────────────────────────────────────────┐
  │                      WEB BROWSER                            │
  │                                                             │
- │   User interacts with OrderOS Dashboard (React + Tailwind)   │
+ │   User interacts with Orderix Dashboard (React + Tailwind)  │
  │   Runs locally at: http://localhost:3000                    │
  └──────────────────────────────┬──────────────────────────────┘
                                 │
@@ -231,13 +231,13 @@ Here is exactly how the 4 detection vectors work with examples from our dataset:
 1. Spawns an automated browser session in an isolated microVM.
 2. Navigates the public tracking page, locates the tracking input, and submits the waybill number.
 3. Observes and extracts tracking milestones, current location, statuses, and delivery dates.
-4. Returns clean, structured JSON conforming to the OrderOS 7-field schema.
+4. Returns clean, structured JSON conforming to the Orderix 7-field schema.
 
 ### Current Implementation Status: **LIVE & OPERATIONAL**
 * **Authentication**: Uses `process.env.TINYFISH_API_KEY` loaded securely via `dotenv` from `server/.env`. The key is completely isolated and never exposed to the frontend, logs, or Git.
 * **Service Module**: Built in [`server/src/tinyfish.js`](file:///c:/Users/princ/OneDrive/Documents/Orderix/server/src/tinyfish.js) using the official `POST https://agent.tinyfish.ai/v1/automation/run` endpoint and `X-API-Key` authentication.
 * **Sandbox Verification**: Tested and verified using the **Parcel Perfect Sandbox** (`https://parcelperfect.com/tracking-demo/`) with **Waybill `1`**. The live agent executed 10-13 browser steps, extracted the full milestone history, and confirmed status `"Delivered"` in Cape Town.
-* **Instant Intelligence Loop**: When TinyFish returns live tracking data, OrderOS immediately feeds it into the `analyzeShipmentIntelligence()` engine, updating the risk score, risk level, and timeline milestones in real time.
+* **Instant Intelligence Loop**: When TinyFish returns live tracking data, Orderix immediately feeds it into the `analyzeShipmentIntelligence()` engine, updating the risk score, risk level, and timeline milestones in real time.
 
 ```
 [ Parcel Perfect Public Portal ]
@@ -247,7 +247,7 @@ Here is exactly how the 4 detection vectors work with examples from our dataset:
        │
        │ HTTP POST /v1/automation/run (X-API-Key)
        ▼
-[ OrderOS Backend Service (server/src/tinyfish.js) ]
+[ Orderix Backend Service (server/src/tinyfish.js) ]
        │
        │ Normalizes into 7-field schema
        ▼
@@ -255,7 +255,7 @@ Here is exactly how the 4 detection vectors work with examples from our dataset:
        │
        │ Evaluates risk & updates in-memory order
        ▼
-[ OrderOS Dashboard & Details View (Live Badge) ]
+[ Orderix Dashboard & Details View (Live Badge) ]
 ```
 
 ---
@@ -301,7 +301,7 @@ Here is the exact lifecycle of an order from when the user visits the app:
 
 ## 8. Glossary of Key Technical Terms
 
-| Term | Everyday Meaning | Example in OrderOS |
+| Term | Everyday Meaning | Example in Orderix |
 |---|---|---|
 | **Frontend** | The visual user interface that runs inside the user's web browser. | Everything in the `client/` folder (React, Tailwind buttons, tables). |
 | **Backend** | The background engine running on the server that handles logic, data, and security. | Everything in the `server/` folder (Express server, intelligence logic). |
@@ -320,5 +320,5 @@ Here is the exact lifecycle of an order from when the user visits the app:
 
 ---
 
-*This guide was generated specifically for the OrderOS codebase to support hackathon presentations, architecture reviews, and future live TinyFish API integrations.*
+*This guide was generated specifically for the Orderix codebase to support hackathon presentations, architecture reviews, and TinyFish API integrations.*
 

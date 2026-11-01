@@ -1,8 +1,8 @@
 {
-  "name": "orderos-workspace",
+  "name": "orderix-workspace",
   "version": "1.0.0",
   "private": true,
-  "description": "OrderOS - AI-Powered Order & Logistics Intelligence MVP",
+  "description": "Orderix - AI-Powered Order & Shipment Intelligence",
   "scripts": {
     "dev": "concurrently -n \"SERVER,CLIENT\" -c \"blue,magenta\" \"npm run server\" \"npm run client\"",
     "server": "npm --prefix server run dev",
