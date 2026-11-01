@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { X, Copy, Check, Terminal, Play, Sparkles, FileText } from 'lucide-react';
+import { X, Copy, Check, Terminal, Play, Sparkles, FileText, Code2, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { analyzeCustomPayload } from '../services/api';
 
 export default function RawJsonModal({ isOpen, onClose, selectedOrder }) {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState('extracted');
+  const [payloadSubTab, setPayloadSubTab] = useState('normalized'); // 'normalized' | 'raw'
   const [customJsonInput, setCustomJsonInput] = useState(
     JSON.stringify(
       {
@@ -41,8 +42,15 @@ export default function RawJsonModal({ isOpen, onClose, selectedOrder }) {
 
   if (!isOpen) return null;
 
-  // The extracted TinyFish JSON structure for the currently selected order or demo
-  const sampleJson = selectedOrder?.shipment || {
+  const shipment = selectedOrder?.shipment || {};
+  const isLiveVerified = shipment.isDemoData === false && shipment.liveRunMeta?.extractionSuccess === true;
+  const lastExt = shipment.lastExtractionResult;
+  const isNotFound = lastExt?.extractionStatus === 'WAYBILL_NOT_FOUND' || shipment.extractionStatus === 'WAYBILL_NOT_FOUND';
+  const isIncomplete = lastExt?.extractionStatus === 'EXTRACTION_INCOMPLETE' || shipment.extractionStatus === 'EXTRACTION_INCOMPLETE';
+  const isDemo = shipment.isDemoData !== false && !isLiveVerified;
+
+  // 1. Backend-Normalized JSON payload
+  const sampleJson = shipment.waybillNumber ? shipment : {
     waybillNumber: "WB-982344192",
     carrier: "BlueDart Apex Express",
     origin: { city: "Chennai", state: "Tamil Nadu", country: "India", hub: "MAA Airport Logistics Facility" },
@@ -77,8 +85,18 @@ export default function RawJsonModal({ isOpen, onClose, selectedOrder }) {
 
   const jsonString = JSON.stringify(sampleJson, null, 2);
 
+  // 2. Raw TinyFish Agent output (un-normalized markdown or text from web browser)
+  const rawAgentOutput =
+    shipment.rawResponse ||
+    lastExt?.rawResponse ||
+    (isDemo
+      ? `## Tracking Details for Waybill #${shipment.waybillNumber || 'WB-982344192'}\n\n### Shipment Summary\n- **Waybill Number:** ${shipment.waybillNumber || 'WB-982344192'}\n- **Date:** 2026-10-29\n- **Carrier:** ${shipment.carrier || 'BlueDart'}\n- **Origin Hub:** MAA\n- **Destination Hub:** BLR\n- **Shipment Status:** In Transit\n\n### Event History\n| Date | Time | Location | Details |\n|------|------|----------|---------|\n| 29.10.2026 | 14:20:00 | Chennai Hub - Gate 4 | Consignment handed over by supplier warehouse |\n| 29.10.2026 | 21:45:00 | MAA Airport Logistics | Processed through Sorting Hub |\n| 01.11.2026 | 08:30:00 | Hosur Transit Gateway | Container arrived at gateway hub |`
+      : 'No raw agent response captured for this order.');
+
+  const currentDisplayString = payloadSubTab === 'normalized' ? jsonString : rawAgentOutput;
+
   const handleCopy = () => {
-    navigator.clipboard.writeText(jsonString);
+    navigator.clipboard.writeText(currentDisplayString);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -108,14 +126,36 @@ export default function RawJsonModal({ isOpen, onClose, selectedOrder }) {
               <Terminal className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                TinyFish Structured Tracking JSON
-                <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  Demo Payload
-                </span>
-              </h3>
-              <p className="text-xs text-slate-400">
-                Verified schema returned by TinyFish Playground after navigating tracking portal.
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-white">
+                  TinyFish Extraction Telemetry
+                </h3>
+                {isLiveVerified ? (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold">
+                    Live Verified Extraction
+                  </span>
+                ) : isNotFound ? (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
+                    Waybill Not Found (Unverified)
+                  </span>
+                ) : isIncomplete ? (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
+                    Extraction Incomplete (Unverified)
+                  </span>
+                ) : (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">
+                    Demo Spec Payload
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {isLiveVerified
+                  ? `Live tracking telemetry verified by TinyFish web agent (Run #${shipment.liveRunMeta?.runId?.slice(0, 8)}).`
+                  : isNotFound
+                    ? "Carrier portal returned 'No details found'. Data integrity safeguards prevented fallback hallucination."
+                    : isIncomplete
+                      ? 'Carrier portal returned incomplete records. Preserved existing order telemetry.'
+                      : 'Standard 7-field tracking schema conforming to TinyFish Playground extraction specification.'}
               </p>
             </div>
           </div>
@@ -139,7 +179,7 @@ export default function RawJsonModal({ isOpen, onClose, selectedOrder }) {
             }`}
           >
             <FileText className="w-3.5 h-3.5" />
-            Extracted Payload ({selectedOrder ? selectedOrder.customerOrderId : 'Demo Spec'})
+            Payload Inspector ({selectedOrder ? selectedOrder.customerOrderId : 'Demo Spec'})
           </button>
 
           <button
@@ -159,26 +199,76 @@ export default function RawJsonModal({ isOpen, onClose, selectedOrder }) {
         <div className="p-6 overflow-y-auto flex-1 font-mono text-xs">
           {activeTab === 'extracted' ? (
             <div>
-              <div className="flex items-center justify-between mb-3 text-slate-400">
-                <span>Format: application/json</span>
-                <button
-                  onClick={handleCopy}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-sans transition-colors"
-                >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copied ? 'Copied' : 'Copy JSON'}</span>
-                </button>
+              {/* Sub-tab segmented control: Normalized vs Raw */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                <div className="inline-flex rounded-lg bg-slate-950 p-1 border border-slate-800 font-sans">
+                  <button
+                    onClick={() => setPayloadSubTab('normalized')}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                      payloadSubTab === 'normalized'
+                        ? 'bg-indigo-600 text-white shadow'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Code2 className="w-3.5 h-3.5" />
+                    <span>Backend-Normalized JSON</span>
+                  </button>
+                  <button
+                    onClick={() => setPayloadSubTab('raw')}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                      payloadSubTab === 'raw'
+                        ? 'bg-indigo-600 text-white shadow'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Raw TinyFish Agent Output</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="text-slate-400 text-[11px] font-sans">
+                    Format: {payloadSubTab === 'normalized' ? 'application/json' : 'text/markdown'}
+                  </span>
+                  <button
+                    onClick={handleCopy}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-sans transition-colors"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copied ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
               </div>
 
-              <pre className="p-4 rounded-xl bg-slate-950 text-emerald-400 border border-slate-800/80 overflow-x-auto leading-relaxed max-h-[50vh]">
-                {jsonString}
+              {/* Payload code block */}
+              <pre className="p-4 rounded-xl bg-slate-950 text-emerald-400 border border-slate-800/80 overflow-x-auto leading-relaxed max-h-[48vh] whitespace-pre-wrap">
+                {currentDisplayString}
               </pre>
 
-              <div className="mt-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-slate-300 text-xs font-sans">
-                <span className="font-semibold text-amber-300">Notice for Evaluators:</span> This structure holds the 7 standard tracking fields extracted by TinyFish:
-                <span className="text-slate-400 block mt-1">
-                  1. Waybill number &nbsp;•&nbsp; 2. Origin & destination &nbsp;•&nbsp; 3. Shipment status &nbsp;•&nbsp; 4. Shipment history &nbsp;•&nbsp; 5. Current location &nbsp;•&nbsp; 6. Latest tracking update &nbsp;•&nbsp; 7. Expected delivery date
-                </span>
+              {/* Informational Callout */}
+              <div className="mt-4 p-3 rounded-lg bg-slate-950/70 border border-slate-800 text-slate-300 text-xs font-sans">
+                {isLiveVerified ? (
+                  <div className="flex items-start gap-2 text-emerald-300">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-semibold text-emerald-300">Live Telemetry Verified:</span> This order contains genuine live tracking records extracted from {shipment.carrierTrackingUrl} ({shipment.liveRunMeta?.durationSeconds || 0}s agent execution).
+                    </div>
+                  </div>
+                ) : isNotFound ? (
+                  <div className="flex items-start gap-2 text-amber-300">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-semibold text-amber-300">Data Integrity Guard Active:</span> The carrier portal returned "No details found". Orderix preserved existing order state and prevented fake "Delivered" status or fake Cape Town coordinates.
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <span className="font-semibold text-indigo-300">Schema Specification:</span> Orderix extracts and standardizes 7 operational tracking fields from TinyFish:
+                    <span className="text-slate-400 block mt-1">
+                      1. Waybill number &nbsp;•&nbsp; 2. Origin & destination &nbsp;•&nbsp; 3. Shipment status &nbsp;•&nbsp; 4. Shipment history &nbsp;•&nbsp; 5. Current location &nbsp;•&nbsp; 6. Latest tracking update &nbsp;•&nbsp; 7. Expected delivery date
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           ) : (

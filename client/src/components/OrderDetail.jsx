@@ -11,6 +11,7 @@ import {
   Clock, 
   Sparkles, 
   AlertTriangle, 
+  AlertCircle,
   Hourglass, 
   Layers, 
   HelpCircle, 
@@ -34,9 +35,15 @@ export default function OrderDetail({ order, onBack, onOpenJsonModal, onOrderUpd
   const [isLiveSyncing, setIsLiveSyncing] = useState(false);
   const [liveSyncError, setLiveSyncError] = useState(null);
   const [liveSyncSuccess, setLiveSyncSuccess] = useState(false);
+  const [extractionStatus, setExtractionStatus] = useState(null);
 
   useEffect(() => {
     setCurrentOrder(order);
+    setExtractionStatus(
+      order?.shipment?.isDemoData === false && order?.shipment?.liveRunMeta?.extractionSuccess
+        ? 'LIVE_EXTRACTION_SUCCESSFUL'
+        : null
+    );
   }, [order]);
 
   if (!currentOrder) return null;
@@ -45,7 +52,14 @@ export default function OrderDetail({ order, onBack, onOpenJsonModal, onOrderUpd
   const shipment = currentOrder.shipment || {};
   const history = shipment.shipmentHistory || [];
   const issues = intel.issues || [];
-  const isLive = shipment.isDemoData === false || Boolean(shipment.liveRunMeta);
+
+  // Carrier validation: check if tracking portal URL is configured
+  const hasTrackingUrl = Boolean(shipment.carrierTrackingUrl && String(shipment.carrierTrackingUrl).trim().length > 0);
+  const isBlueDart = String(shipment.carrier || '').toLowerCase().includes('bluedart');
+  const isCarrierSupported = hasTrackingUrl && !(isBlueDart && String(shipment.carrierTrackingUrl).includes('parcelperfect.com'));
+
+  // Live status is true ONLY if live extraction was genuinely successful
+  const isLive = shipment.isDemoData === false && shipment.liveRunMeta?.extractionSuccess === true;
 
   const handleCopyWaybill = () => {
     if (shipment.waybillNumber) {
@@ -56,26 +70,68 @@ export default function OrderDetail({ order, onBack, onOpenJsonModal, onOrderUpd
   };
 
   const handleSyncLive = async () => {
+    // 1. Guard check for carrier tracking URL
+    if (!hasTrackingUrl) {
+      setLiveSyncError(`Carrier tracking URL is not configured for ${shipment.carrier || 'this order'}. Live TinyFish extraction requires an active tracking portal URL.`);
+      setExtractionStatus('UNSUPPORTED_CARRIER');
+      return;
+    }
+
+    if (isBlueDart && String(shipment.carrierTrackingUrl).includes('parcelperfect.com')) {
+      setLiveSyncError(`Carrier configuration mismatch: Order carrier is '${shipment.carrier}', but the URL is for Parcel Perfect. Cross-carrier sandbox tracking is not allowed.`);
+      setExtractionStatus('UNSUPPORTED_CARRIER');
+      return;
+    }
+
     try {
       setIsLiveSyncing(true);
       setLiveSyncError(null);
       setLiveSyncSuccess(false);
 
       const res = await trackLiveWithTinyFish({
-        waybillNumber: shipment.waybillNumber || '1',
-        trackingUrl: shipment.carrierTrackingUrl || 'https://parcelperfect.com/tracking-demo/',
-        carrier: shipment.carrier || 'Parcel Perfect Express',
+        waybillNumber: shipment.waybillNumber,
+        trackingUrl: shipment.carrierTrackingUrl,
+        carrier: shipment.carrier,
         orderId: currentOrder.id
       });
 
       if (res.success && res.data?.order) {
+        // Successful extraction: update currentOrder and propagate
         setCurrentOrder(res.data.order);
         if (onOrderUpdated) onOrderUpdated(res.data.order);
+        setExtractionStatus('LIVE_EXTRACTION_SUCCESSFUL');
         setLiveSyncSuccess(true);
-        setTimeout(() => setLiveSyncSuccess(false), 4000);
+        setLiveSyncError(null);
+        setTimeout(() => setLiveSyncSuccess(false), 5000);
+      } else {
+        // Unsuccessful extraction (WAYBILL_NOT_FOUND, EXTRACTION_INCOMPLETE, etc.)
+        // PRESERVE EXISTING ORDER DATA! Never change order status or shipment details!
+        const status = res.extractionStatus || 'WAYBILL_NOT_FOUND';
+        setExtractionStatus(status);
+        setLiveSyncSuccess(false);
+        setLiveSyncError(res.message || `Extraction unsuccessful: ${status}. Existing order data was preserved.`);
+
+        // Attach extraction telemetry to shipment so inspector can show raw response without altering genuine order
+        if (res.rawResponse) {
+          setCurrentOrder(prev => ({
+            ...prev,
+            shipment: {
+              ...prev.shipment,
+              lastExtractionResult: {
+                extractionStatus: status,
+                rawResponse: res.rawResponse,
+                message: res.message,
+                liveRunMeta: res.liveRunMeta
+              }
+            }
+          }));
+        }
       }
     } catch (err) {
+      const status = err.extractionStatus || 'CONNECTION_ERROR';
+      setExtractionStatus(status);
       setLiveSyncError(err.message || 'Live TinyFish execution failed.');
+      setLiveSyncSuccess(false);
     } finally {
       setIsLiveSyncing(false);
     }
@@ -125,19 +181,27 @@ export default function OrderDetail({ order, onBack, onOpenJsonModal, onOrderUpd
           {/* Live TinyFish Sync Button */}
           <button
             onClick={handleSyncLive}
-            disabled={isLiveSyncing}
+            disabled={isLiveSyncing || !isCarrierSupported}
+            title={!isCarrierSupported ? 'Carrier tracking portal URL is not configured for this order' : 'Track live with TinyFish agent'}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg ${
-              isLiveSyncing
-                ? 'bg-cyan-950 text-cyan-300 border border-cyan-800 animate-pulse cursor-wait'
-                : isLive
-                  ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white shadow-cyan-600/20'
-                  : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/20'
+              !isCarrierSupported
+                ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed shadow-none'
+                : isLiveSyncing
+                  ? 'bg-cyan-950 text-cyan-300 border border-cyan-800 animate-pulse cursor-wait'
+                  : isLive
+                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white shadow-cyan-600/20'
+                    : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/20'
             }`}
           >
             {isLiveSyncing ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
                 <span>TinyFish Agent Navigating Portal...</span>
+              </>
+            ) : !isCarrierSupported ? (
+              <>
+                <Radio className="w-3.5 h-3.5 text-slate-500" />
+                <span>Tracking Not Configured</span>
               </>
             ) : (
               <>
@@ -157,23 +221,71 @@ export default function OrderDetail({ order, onBack, onOpenJsonModal, onOrderUpd
         </div>
       </div>
 
-      {/* Sync Success / Error Alerts */}
+      {/* Configuration Warning Alert if tracking URL is missing */}
+      {!hasTrackingUrl && (
+        <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/20 text-amber-300 text-xs flex items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong>Carrier Tracking Not Configured:</strong> {shipment.carrier || 'This carrier'} has no active tracking portal URL configured in the manifest. Live TinyFish web extraction is disabled for this order.
+            </span>
+          </div>
+          <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold shrink-0">
+            CONFIG REQUIRED
+          </span>
+        </div>
+      )}
+
+      {/* Sync Success Alert */}
       {liveSyncSuccess && (
         <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs flex items-center justify-between gap-3 animate-in fade-in">
           <div className="flex items-center gap-2.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>
-              <strong>TinyFish Extraction Verified:</strong> Live shipment tracking telemetry pulled from {shipment.carrierTrackingUrl} ({shipment.liveRunMeta?.durationSeconds || 0}s execution, {shipment.liveRunMeta?.stepsCount || 0} steps).
+              <strong>Live Extraction Successful:</strong> Genuine shipment tracking telemetry pulled from {shipment.carrierTrackingUrl} ({shipment.liveRunMeta?.durationSeconds || 0}s execution, {shipment.liveRunMeta?.stepsCount || 0} steps).
             </span>
           </div>
-          <span className="text-[11px] font-mono text-emerald-400/80">LIVE MODE</span>
+          <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold shrink-0">
+            LIVE EXTRACTION SUCCESSFUL
+          </span>
         </div>
       )}
 
+      {/* Sync Failure / Warning Alert */}
       {liveSyncError && (
-        <div className="p-3.5 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2.5 animate-in fade-in">
-          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-          <span>TinyFish Live Agent Error: {liveSyncError}</span>
+        <div className={`p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 animate-in fade-in ${
+          extractionStatus === 'WAYBILL_NOT_FOUND'
+            ? 'bg-amber-950/40 border-amber-500/30 text-amber-300'
+            : extractionStatus === 'EXTRACTION_INCOMPLETE'
+              ? 'bg-amber-950/40 border-amber-500/30 text-amber-300'
+              : 'bg-rose-950/40 border-rose-500/30 text-rose-300'
+        }`}>
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className={`w-4 h-4 shrink-0 ${
+              extractionStatus === 'WAYBILL_NOT_FOUND' ? 'text-amber-400' : 'text-rose-400'
+            }`} />
+            <span>
+              <strong>{extractionStatus === 'WAYBILL_NOT_FOUND' ? 'Waybill Not Found on Portal: ' : 'Extraction Alert: '}</strong>
+              {liveSyncError}
+            </span>
+          </div>
+          <span className={`text-[11px] font-mono px-2 py-0.5 rounded border font-bold shrink-0 ${
+            extractionStatus === 'WAYBILL_NOT_FOUND'
+              ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+              : extractionStatus === 'EXTRACTION_INCOMPLETE'
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                : extractionStatus === 'UNSUPPORTED_CARRIER'
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                  : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+          }`}>
+            {extractionStatus === 'WAYBILL_NOT_FOUND'
+              ? 'WAYBILL NOT FOUND'
+              : extractionStatus === 'EXTRACTION_INCOMPLETE'
+                ? 'EXTRACTION INCOMPLETE'
+                : extractionStatus === 'UNSUPPORTED_CARRIER'
+                  ? 'UNSUPPORTED CARRIER'
+                  : 'CONNECTION ERROR'}
+          </span>
         </div>
       )}
 
@@ -213,14 +325,29 @@ export default function OrderDetail({ order, onBack, onOpenJsonModal, onOrderUpd
               </span>
               <span>•</span>
               {isLive ? (
-                <span className="flex items-center gap-1.5 text-cyan-400 font-semibold">
-                  <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-                  LIVE TINYFISH VERIFIED (Run #{shipment.liveRunMeta?.runId?.slice(0, 8) || 'live'})
+                <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  LIVE EXTRACTION SUCCESSFUL (Run #{shipment.liveRunMeta?.runId?.slice(0, 8) || 'live'})
+                </span>
+              ) : extractionStatus === 'WAYBILL_NOT_FOUND' ? (
+                <span className="flex items-center gap-1.5 text-amber-400 font-semibold">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                  WAYBILL NOT FOUND
+                </span>
+              ) : extractionStatus === 'EXTRACTION_INCOMPLETE' ? (
+                <span className="flex items-center gap-1.5 text-amber-400 font-semibold">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                  EXTRACTION INCOMPLETE
+                </span>
+              ) : extractionStatus === 'CONNECTION_ERROR' ? (
+                <span className="flex items-center gap-1.5 text-rose-400 font-semibold">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+                  CONNECTION ERROR
                 </span>
               ) : (
                 <span className="flex items-center gap-1 text-amber-400/90">
                   <Info className="w-3.5 h-3.5" />
-                  Demo Dataset (Sandbox Sandbox Test Mode)
+                  Demo Dataset (Sandbox Test Mode)
                 </span>
               )}
             </div>
@@ -526,15 +653,23 @@ export default function OrderDetail({ order, onBack, onOpenJsonModal, onOrderUpd
                 <h3 className="text-base font-bold text-white">
                   Shipment Information & Carrier Telemetry
                 </h3>
-                {isLive && (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
-                    LIVE TINYFISH EXTRACTED
+                {isLive ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+                    LIVE EXTRACTION SUCCESSFUL
                   </span>
-                )}
+                ) : extractionStatus === 'WAYBILL_NOT_FOUND' ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+                    WAYBILL NOT FOUND
+                  </span>
+                ) : extractionStatus === 'EXTRACTION_INCOMPLETE' ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+                    EXTRACTION INCOMPLETE
+                  </span>
+                ) : null}
               </div>
               <p className="text-xs text-slate-400">
                 {isLive 
-                  ? `Automated web agent execution on ${shipment.carrierTrackingUrl || 'carrier portal'}` 
+                  ? `Automated web agent extraction on ${shipment.carrierTrackingUrl || 'carrier portal'}` 
                   : 'Structured schema conforming to TinyFish Playground extraction'}
               </p>
             </div>
@@ -543,11 +678,22 @@ export default function OrderDetail({ order, onBack, onOpenJsonModal, onOrderUpd
           <div className="flex items-center gap-2">
             <button
               onClick={handleSyncLive}
-              disabled={isLiveSyncing}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 transition-colors"
+              disabled={isLiveSyncing || !isCarrierSupported}
+              title={!isCarrierSupported ? 'Carrier tracking portal URL is not configured' : 'Re-Run TinyFish Agent'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                !isCarrierSupported
+                  ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                  : 'bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-300 border border-cyan-500/30'
+              }`}
             >
-              {isLiveSyncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-              <span>{isLiveSyncing ? 'Fetching...' : 'Re-Run TinyFish Agent'}</span>
+              {isLiveSyncing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {isLiveSyncing ? 'Fetching...' : !isCarrierSupported ? 'Tracking Not Configured' : 'Re-Run TinyFish Agent'}
+              </span>
             </button>
             <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
               Carrier: {shipment.carrier || 'Not assigned'}

@@ -28,93 +28,150 @@ router.get('/tinyfish/status', (req, res) => {
 });
 
 /**
+ * POST /api/orders/reset
+ * Resets in-memory orders back to demoOrders base data
+ */
+router.post('/reset', (req, res) => {
+  orders = JSON.parse(JSON.stringify(demoOrders));
+  res.json({
+    success: true,
+    message: 'Reset in-memory orders to initial demo dataset.'
+  });
+});
+
+/**
  * POST /api/orders/tinyfish/track
- * Runs live TinyFish Web Agent to extract live tracking from Parcel Perfect or any public tracking portal
+ * Runs live TinyFish Web Agent to extract live tracking from a carrier tracking portal.
+ * Validates carrier and tracking portal URL. Never mutates order on failed or incomplete runs.
  */
 router.post('/tinyfish/track', async (req, res) => {
   try {
     const { 
-      waybillNumber = '1', 
-      trackingUrl = 'https://parcelperfect.com/tracking-demo/', 
-      carrier = 'Parcel Perfect Express',
-      orderId = 'ord-100'
+      waybillNumber, 
+      trackingUrl, 
+      carrier,
+      orderId 
     } = req.body || {};
 
     if (!isTinyFishConfigured()) {
       return res.status(400).json({
         success: false,
+        extractionStatus: 'CONNECTION_ERROR',
         error: 'TINYFISH_API_KEY is not configured in server/.env. Please configure your key.'
       });
     }
 
-    // Call official TinyFish API
-    const liveShipment = await trackShipmentWithTinyFish({
-      waybillNumber,
-      trackingUrl,
-      carrier
+    // 1. Target Order & Carrier URL Validation
+    if (!orderId && !waybillNumber) {
+      return res.status(400).json({
+        success: false,
+        extractionStatus: 'VALIDATION_ERROR',
+        error: 'orderId or waybillNumber is required to initiate live tracking.'
+      });
+    }
+
+    let targetOrder = null;
+    if (orderId) {
+      targetOrder = orders.find(o => o.id === orderId || o.customerOrderId === orderId);
+    } else if (waybillNumber) {
+      targetOrder = orders.find(o => o.shipment?.waybillNumber === waybillNumber);
+    }
+
+    if (!targetOrder) {
+      return res.status(404).json({
+        success: false,
+        extractionStatus: 'VALIDATION_ERROR',
+        error: `Order '${orderId || waybillNumber}' was not found in Orderix database.`
+      });
+    }
+
+    const orderCarrier = targetOrder.shipment?.carrier || carrier || 'Unknown Carrier';
+    // Do NOT default an unknown or missing carrier tracking URL to Parcel Perfect
+    const orderTrackingUrl = targetOrder.shipment?.carrierTrackingUrl || trackingUrl || null;
+    const orderWaybill = waybillNumber || targetOrder.shipment?.waybillNumber;
+
+    // Check that the selected order has a configured tracking URL
+    if (!orderTrackingUrl || typeof orderTrackingUrl !== 'string' || orderTrackingUrl.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        extractionStatus: 'UNSUPPORTED_CARRIER',
+        error: `Tracking portal URL is not configured for ${orderCarrier}. Live TinyFish extraction requires an active carrier tracking portal URL.`
+      });
+    }
+
+    // Carrier mismatch validation: Do not allow BlueDart orders to use Parcel Perfect sandbox URL
+    const isBlueDart = orderCarrier.toLowerCase().includes('bluedart');
+    const isParcelPerfectUrl = orderTrackingUrl.toLowerCase().includes('parcelperfect.com');
+    if (isBlueDart && isParcelPerfectUrl) {
+      return res.status(400).json({
+        success: false,
+        extractionStatus: 'UNSUPPORTED_CARRIER',
+        error: `Carrier configuration error: Order carrier is '${orderCarrier}', but the tracking URL is for Parcel Perfect. Cross-carrier sandbox tracking is not permitted.`
+      });
+    }
+
+    // 2. Call live TinyFish Web Agent
+    const extractionResult = await trackShipmentWithTinyFish({
+      waybillNumber: orderWaybill,
+      trackingUrl: orderTrackingUrl,
+      carrier: orderCarrier
     });
 
-    // Update in-memory order if orderId matches
-    let targetOrder = orders.find(o => o.id === orderId || o.customerOrderId === orderId || o.shipment?.waybillNumber === waybillNumber);
+    // 3. Handle unsuccessful extraction: Preserve order & existing shipment data
+    if (!extractionResult.success) {
+      const intelligence = analyzeShipmentIntelligence(targetOrder);
 
-    if (targetOrder) {
-      targetOrder.shipment = {
-        ...targetOrder.shipment,
-        ...liveShipment
-      };
-      if (liveShipment.shipmentStatus) {
-        targetOrder.orderStatus = liveShipment.shipmentStatus.toLowerCase().includes('deliver') ? 'Delivered' : 'Dispatched';
+      return res.status(200).json({
+        success: false,
+        extractionStatus: extractionResult.extractionStatus, // 'WAYBILL_NOT_FOUND' | 'EXTRACTION_INCOMPLETE' | 'CONNECTION_ERROR'
+        message: extractionResult.message || 'Tracking extraction was unsuccessful.',
+        rawResponse: extractionResult.rawResponse,
+        liveRunMeta: extractionResult.liveRunMeta,
+        data: {
+          order: {
+            ...targetOrder,
+            intelligence
+          },
+          preservedShipment: targetOrder.shipment,
+          extractionStatus: extractionResult.extractionStatus,
+          rawResponse: extractionResult.rawResponse,
+          message: extractionResult.message
+        }
+      });
+    }
+
+    // 4. Successful extraction: Update shipment information ONLY after successful validation
+    const liveShipment = extractionResult.shipment;
+
+    targetOrder.shipment = {
+      ...targetOrder.shipment,
+      ...liveShipment
+    };
+
+    // Update orderStatus ONLY if valid genuine status was extracted
+    if (liveShipment.shipmentStatus) {
+      const st = liveShipment.shipmentStatus.toLowerCase();
+      if (st.includes('deliver') && !st.includes('undelivered') && !st.includes('pending delivery')) {
+        targetOrder.orderStatus = 'Delivered';
+      } else if (st.includes('transit') || st.includes('customs') || st.includes('collect') || st.includes('dispatched')) {
+        targetOrder.orderStatus = 'Dispatched';
       }
-    } else {
-      // If no matching order found, create a live tracked order entry
-      targetOrder = {
-        id: `ord-live-${Date.now()}`,
-        customerOrderId: `ORD-LIVE-${waybillNumber}`,
-        supplierOrderId: `SUP-LIVE-${waybillNumber}`,
-        orderDate: new Date().toISOString(),
-        orderStatus: liveShipment.shipmentStatus.toLowerCase().includes('deliver') ? 'Delivered' : 'Dispatched',
-        totalAmount: '$1,950.00',
-        priority: 'High',
-        items: [{ name: 'Tracked Consignment Item', sku: 'LIVE-ITEM-1', quantity: 1, unitPrice: '$1,950.00' }],
-        customer: {
-          name: 'PPOnline Testing Consignee',
-          company: 'Parcel Perfect Logistics Client',
-          email: 'tracking@parcelperfect.com',
-          phone: '+27 21 555 0100',
-          shippingAddress: {
-            street: 'Cape Town Central Delivery Station',
-            city: liveShipment.destination?.city || 'Cape Town',
-            state: 'Western Cape',
-            postalCode: '8001',
-            country: 'South Africa'
-          }
-        },
-        supplier: {
-          name: 'Parcel Perfect Sandbox Fulfillment',
-          contactPerson: 'Sandboxed Supplier',
-          email: 'support@parcelperfect.com',
-          phone: '+27 11 000 1122',
-          warehouse: 'CPT Sort Hub',
-          supplierSku: 'PP-SANDBOX-SKU'
-        },
-        shipment: liveShipment
-      };
-      orders.unshift(targetOrder);
     }
 
     // Enrich with updated AI shipment intelligence
     const intelligence = analyzeShipmentIntelligence(targetOrder);
-    const enrichedOrder = {
-      ...targetOrder,
-      intelligence
-    };
+    targetOrder.intelligence = intelligence;
 
-    res.json({
+    return res.json({
       success: true,
+      extractionStatus: 'LIVE_EXTRACTION_SUCCESSFUL',
+      message: `Successfully extracted live tracking telemetry for Waybill #${orderWaybill}.`,
+      rawResponse: extractionResult.rawResponse,
       data: {
-        order: enrichedOrder,
-        liveShipment,
-        message: `Successfully executed live TinyFish agent run on ${trackingUrl} for Waybill #${waybillNumber}.`
+        order: targetOrder,
+        shipment: liveShipment,
+        intelligence,
+        extractionStatus: 'LIVE_EXTRACTION_SUCCESSFUL'
       }
     });
 
@@ -122,6 +179,7 @@ router.post('/tinyfish/track', async (req, res) => {
     console.error('[TinyFish Route Error]:', err.message);
     res.status(500).json({
       success: false,
+      extractionStatus: 'CONNECTION_ERROR',
       error: err.message
     });
   }

@@ -47,7 +47,7 @@ export async function fetchTinyFishStatus() {
   return response.json();
 }
 
-export async function trackLiveWithTinyFish({ waybillNumber = '1', trackingUrl, carrier, orderId } = {}) {
+export async function trackLiveWithTinyFish({ waybillNumber, trackingUrl, carrier, orderId } = {}) {
   const response = await fetch(`${BASE_URL}/orders/tinyfish/track`, {
     method: 'POST',
     headers: {
@@ -60,15 +60,13 @@ export async function trackLiveWithTinyFish({ waybillNumber = '1', trackingUrl, 
       orderId
     })
   });
+  const data = await response.json().catch(() => null);
   if (!response.ok) {
-    let errorMsg = response.statusText;
-    try {
-      const errJson = await response.json();
-      errorMsg = errJson.error || errJson.message || errorMsg;
-    } catch {
-      // Ignore JSON parse error and use statusText
-    }
-    throw new Error(errorMsg);
+    const errorMsg = data?.error || data?.message || response.statusText;
+    const err = new Error(errorMsg);
+    err.extractionStatus = data?.extractionStatus || 'CONNECTION_ERROR';
+    err.data = data;
+    throw err;
   }
-  return response.json();
+  return data;
 }
